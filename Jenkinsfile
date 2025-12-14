@@ -7,25 +7,17 @@ pipeline {
     }
 
     environment {
-        // Git
-        REPO_URL = 'https://github.com/dhia-behi/dhia.git'
-        BRANCH   = 'main'
-
-        // Docker Hub
-        DOCKER_IMAGE          = 'dhiaest/student-management'
-        DOCKER_CREDENTIALS_ID = 'dockerhub-credentials'
-
-        // Kubernetes (WSL)
-        K8S_DIR    = 'k8s'
-        KUBECONFIG = '/home/dhiaeddinebehi/.kube/config'
+        DOCKER_IMAGE = "dhiaest/student-management"
+        DOCKER_CREDENTIALS_ID = "dockerhub-credentials"
+        K8S_DIR = "k8s"
     }
 
     stages {
 
         stage('Checkout') {
             steps {
-                git branch: "${BRANCH}",
-                    url: "${REPO_URL}",
+                git branch: 'main',
+                    url: 'https://github.com/dhia-behi/dhia.git',
                     credentialsId: 'github-dhia'
             }
         }
@@ -36,19 +28,10 @@ pipeline {
             }
         }
 
-        stage('Archive Artifact') {
-            steps {
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-            }
-        }
-
         stage('Build Docker Image') {
             steps {
                 sh """
-                    set -e
-                    echo "=== Docker build ==="
-                    docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
-                    docker images | grep -E "student-management|REPOSITORY" || true
+                  docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
                 """
             }
         }
@@ -61,16 +44,17 @@ pipeline {
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
                     sh """
-                        set -e
-                        echo "=== Docker login ==="
-                        echo "\$DOCKER_PASS" | docker login -u "\$DOCKER_USER" --password-stdin
+                      set -e
+                      echo "\$DOCKER_PASS" | docker login -u "\$DOCKER_USER" --password-stdin
 
-                        echo "=== Push BUILD_NUMBER tag ==="
-                        docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
+                      for i in 1 2 3 4 5; do
+                        echo "Docker push attempt \$i"
+                        docker push ${DOCKER_IMAGE}:${BUILD_NUMBER} && break
+                        sleep 10
+                      done
 
-                        echo "=== Tag & push latest ==="
-                        docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
-                        docker push ${DOCKER_IMAGE}:latest
+                      docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
+                      docker push ${DOCKER_IMAGE}:latest
                     """
                 }
             }
@@ -79,38 +63,19 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 sh """
-                    set -e
-                    echo "=== K8S connectivity (minikube must already be running) ==="
-                    kubectl config use-context minikube || true
-                    kubectl get nodes
-
-                    echo "=== Apply MySQL manifests ==="
-                    kubectl apply -f ${K8S_DIR}/mysql-secret.yaml --validate=false
-                    kubectl apply -f ${K8S_DIR}/mysql-pv-pvc.yaml --validate=false
-                    kubectl apply -f ${K8S_DIR}/mysql-deployment.yaml --validate=false
-                    kubectl apply -f ${K8S_DIR}/mysql-service.yaml --validate=false
-
-                    echo "=== Apply Spring manifests ==="
-                    kubectl apply -f ${K8S_DIR}/spring-deployment.yaml --validate=false
-                    kubectl apply -f ${K8S_DIR}/spring-service.yaml --validate=false
-
-                    echo "=== Update Spring image ==="
-                    kubectl set image deployment/student-management \
-                      student-management=${DOCKER_IMAGE}:${BUILD_NUMBER}
-
-                    echo "=== Rollout ==="
-                    kubectl rollout status deployment/student-management --timeout=180s
-
-                    echo "=== Status ==="
-                    kubectl get pods -o wide
-                    kubectl get svc
+                  kubectl apply -f ${K8S_DIR}
+                  kubectl rollout status deployment/student-app
                 """
             }
         }
     }
 
     post {
-        success { echo "✅ SUCCESS: Build + Push + Deploy OK" }
-        failure { echo "❌ FAILURE: check console logs" }
+        success {
+            echo '✅ Pipeline SUCCESS'
+        }
+        failure {
+            echo '❌ Pipeline FAILED – check logs'
+        }
     }
 }
