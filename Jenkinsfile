@@ -85,40 +85,38 @@ pipeline {
         //     }
         // }
 
-        stage('Deploy to Kubernetes (Minikube)') {
-            steps {
-                sh """
-                    set -e
-                    echo "=== Minikube status / start ==="
-                    minikube status || minikube start --driver=docker
+       stage('Deploy to Kubernetes') {
+  steps {
+    sh """
+      set -e
 
-                    echo "=== Kube context ==="
-                    kubectl config use-context minikube || true
-                    kubectl get nodes
+      echo "=== K8S connectivity ==="
+      kubectl config use-context minikube || true
+      kubectl get nodes
 
-                    echo "=== Apply MySQL manifests ==="
-                    kubectl apply -f ${K8S_DIR}/mysql-secret.yaml --validate=false
-                    kubectl apply -f ${K8S_DIR}/mysql-pv-pvc.yaml --validate=false
-                    kubectl apply -f ${K8S_DIR}/mysql-deployment.yaml --validate=false
-                    kubectl apply -f ${K8S_DIR}/mysql-service.yaml --validate=false
+      echo "=== APPLY MYSQL ==="
+      kubectl apply -f ${K8S_DIR}/mysql-secret.yaml --validate=false
+      kubectl apply -f ${K8S_DIR}/mysql-pv-pvc.yaml --validate=false
+      kubectl apply -f ${K8S_DIR}/mysql-deployment.yaml --validate=false
+      kubectl apply -f ${K8S_DIR}/mysql-service.yaml --validate=false
 
-                    echo "=== Apply Spring manifests ==="
-                    kubectl apply -f ${K8S_DIR}/spring-deployment.yaml --validate=false
-                    kubectl apply -f ${K8S_DIR}/spring-service.yaml --validate=false
+      echo "=== APPLY SPRING ==="
+      kubectl apply -f ${K8S_DIR}/spring-deployment.yaml --validate=false
+      kubectl apply -f ${K8S_DIR}/spring-service.yaml --validate=false
 
-                    echo "=== Update image to ${DOCKER_IMAGE}:${BUILD_NUMBER} ==="
-                    kubectl set image deployment/student-management \
-                      student-management=${DOCKER_IMAGE}:${BUILD_NUMBER}
+      echo "=== UPDATE IMAGE ==="
+      kubectl set image deployment/student-management \
+        student-management=${DOCKER_IMAGE}:${BUILD_NUMBER}
 
-                    echo "=== Rollout status ==="
-                    kubectl rollout status deployment/student-management --timeout=180s
+      echo "=== ROLLOUT ==="
+      kubectl rollout status deployment/student-management --timeout=180s
 
-                    echo "=== Pods / Services ==="
-                    kubectl get pods -o wide
-                    kubectl get svc
-                """
-            }
-        }
+      echo "=== STATUS ==="
+      kubectl get pods -o wide
+      kubectl get svc
+    """
+  }
+}
     }
 
     post {
