@@ -7,32 +7,49 @@ pipeline {
     }
 
     environment {
+        // Git
+        REPO_URL = 'https://github.com/dhia-behi/dhia.git'
+        BRANCH   = 'main'
+
+        // Docker Hub
         DOCKER_IMAGE          = 'dhiaest/student-management'
         DOCKER_CREDENTIALS_ID = 'dockerhub-credentials'
 
+        // Kubernetes (WSL)
         K8S_DIR    = 'k8s'
-        KUBECONFIG = '/home/dhia/.kube/config'
+        KUBECONFIG = '/home/dhiaeddinebehi/.kube/config'
     }
 
     stages {
 
         stage('Checkout') {
             steps {
-                git branch: 'main',
-                    url: 'https://github.com/dhia-behi/dhia.git',
+                git branch: "${BRANCH}",
+                    url: "${REPO_URL}",
                     credentialsId: 'github-dhia'
             }
         }
 
         stage('Build Maven') {
             steps {
-                sh 'mvn clean package -DskipTests'
+                sh 'mvn -B clean package -DskipTests'
+            }
+        }
+
+        stage('Archive Artifact') {
+            steps {
+                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh "docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} ."
+                sh """
+                    set -e
+                    echo "=== Docker build ==="
+                    docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
+                    docker images | grep -E "student-management|REPOSITORY" || true
+                """
             }
         }
 
@@ -44,8 +61,14 @@ pipeline {
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
                     sh """
+                        set -e
+                        echo "=== Docker login ==="
                         echo "\$DOCKER_PASS" | docker login -u "\$DOCKER_USER" --password-stdin
+
+                        echo "=== Push BUILD_NUMBER tag ==="
                         docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
+
+                        echo "=== Tag & push latest ==="
                         docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
                         docker push ${DOCKER_IMAGE}:latest
                     """
@@ -53,34 +76,44 @@ pipeline {
             }
         }
 
+        // (Optionnel) SonarQube - active seulement si tu as configuré Sonar dans Jenkins
+        // stage('MVN SONARQUBE') {
+        //     steps {
+        //         withSonarQubeEnv('sonar') {
+        //             sh 'mvn -DskipTests sonar:sonar -Dsonar.projectKey=student-management'
+        //         }
+        //     }
+        // }
+
         stage('Deploy to Kubernetes (Minikube)') {
             steps {
                 sh """
-                    echo "=== MINIKUBE STATUS / START ==="
+                    set -e
+                    echo "=== Minikube status / start ==="
                     minikube status || minikube start --driver=docker
 
-                    echo "=== K8S CONNECTIVITY ==="
+                    echo "=== Kube context ==="
                     kubectl config use-context minikube || true
                     kubectl get nodes
 
-                    echo "=== APPLY MYSQL ==="
+                    echo "=== Apply MySQL manifests ==="
                     kubectl apply -f ${K8S_DIR}/mysql-secret.yaml --validate=false
                     kubectl apply -f ${K8S_DIR}/mysql-pv-pvc.yaml --validate=false
                     kubectl apply -f ${K8S_DIR}/mysql-deployment.yaml --validate=false
                     kubectl apply -f ${K8S_DIR}/mysql-service.yaml --validate=false
 
-                    echo "=== APPLY SPRING ==="
+                    echo "=== Apply Spring manifests ==="
                     kubectl apply -f ${K8S_DIR}/spring-deployment.yaml --validate=false
                     kubectl apply -f ${K8S_DIR}/spring-service.yaml --validate=false
 
-                    echo "=== UPDATE IMAGE VERSION ==="
+                    echo "=== Update image to ${DOCKER_IMAGE}:${BUILD_NUMBER} ==="
                     kubectl set image deployment/student-management \
-                      student-management=${DOCKER_IMAGE}:${BUILD_NUMBER} || true
+                      student-management=${DOCKER_IMAGE}:${BUILD_NUMBER}
 
-                    echo "=== ROLLOUT ==="
-                    kubectl rollout status deployment/student-management --timeout=180s || true
+                    echo "=== Rollout status ==="
+                    kubectl rollout status deployment/student-management --timeout=180s
 
-                    echo "=== STATUS ==="
+                    echo "=== Pods / Services ==="
                     kubectl get pods -o wide
                     kubectl get svc
                 """
@@ -89,7 +122,7 @@ pipeline {
     }
 
     post {
-        success { echo "✅ SUCCESS: build + push + deploy OK" }
-        failure { echo "❌ FAILURE: check logs" }
+        success { echo "✅ SUCCESS: Build + Push DockerHub + Deploy Minikube OK" }
+        failure { echo "❌ FAILURE: check stage logs" }
     }
 }
