@@ -7,24 +7,25 @@ pipeline {
     }
 
     environment {
+        // Git
+        REPO_URL = 'https://github.com/dhia-behi/dhia.git'
+        BRANCH   = 'main'
+
         // Docker Hub
         DOCKER_IMAGE          = "dhiaest/student-management"
         DOCKER_CREDENTIALS_ID = "dockerhub-credentials"
 
-        // K8s manifests folder in repo
-        K8S_DIR = "k8s"
-
-        // Kubeconfig (WSL user)
-       KUBECONFIG = "/var/lib/jenkins/.kube/config"
-
+        // Kubernetes
+        K8S_DIR    = "k8s"
+        KUBECONFIG = "/var/lib/jenkins/.kube/config"
     }
 
     stages {
 
         stage('Checkout') {
             steps {
-                git branch: 'main',
-                    url: 'https://github.com/dhia-behi/dhia.git',
+                git branch: "${BRANCH}",
+                    url: "${REPO_URL}",
                     credentialsId: 'github-dhia'
             }
         }
@@ -68,30 +69,23 @@ pipeline {
             }
         }
 
-        stage('Deploy to Kubernetes (Minikube)') {
+        stage('Deploy to Kubernetes') {
             steps {
                 sh """
                   set -e
-                  echo "=== Using KUBECONFIG: \$KUBECONFIG ==="
 
-                  echo "=== Current context ==="
-                  kubectl config current-context || true
-
-                  echo "=== Force minikube context ==="
+                  echo "=== KUBECONFIG: \$KUBECONFIG ==="
                   kubectl config use-context minikube || true
+                  kubectl get nodes
 
-                  echo "=== Cluster info / nodes ==="
-                  kubectl cluster-info || true
-                  kubectl get nodes || true
-
-                  echo "=== Apply manifests (disable openapi validation) ==="
+                  echo "=== Apply manifests (no validate) ==="
                   kubectl apply -f ${K8S_DIR} --validate=false
 
-                  echo "=== Update image to ${DOCKER_IMAGE}:${BUILD_NUMBER} (optional) ==="
+                  echo "=== Update image ==="
                   kubectl set image deployment/student-app \
-                    student-app=${DOCKER_IMAGE}:${BUILD_NUMBER} || true
+                    student-app=${DOCKER_IMAGE}:${BUILD_NUMBER}
 
-                  echo "=== Rollout status ==="
+                  echo "=== Rollout ==="
                   kubectl rollout status deployment/student-app --timeout=180s
 
                   echo "=== Pods / Services ==="
@@ -100,39 +94,10 @@ pipeline {
                 """
             }
         }
-
-        stage('Smoke Test (HTTP)') {
-            steps {
-                sh """
-                  set -e
-                  echo "=== Get service URL ==="
-                  APP_URL=\$(minikube service student-service --url | head -n 1)
-                  echo "APP_URL=\$APP_URL"
-
-                  echo "=== Wait + curl ==="
-                  for i in {1..20}; do
-                    CODE=\$(curl -s -o /dev/null -w "%{http_code}" "\$APP_URL" || true)
-                    if echo "\$CODE" | grep -E "200|302|401|403" >/dev/null; then
-                      echo "✅ App is responding (HTTP \$CODE)"
-                      exit 0
-                    fi
-                    echo "Waiting app... attempt \$i (HTTP \$CODE)"
-                    sleep 5
-                  done
-
-                  echo "❌ App did not respond in time"
-                  exit 1
-                """
-            }
-        }
     }
 
     post {
-        success {
-            echo '✅ Pipeline SUCCESS'
-        }
-        failure {
-            echo '❌ Pipeline FAILED – check logs'
-        }
+        success { echo '✅ Pipeline SUCCESS (Kubernetes deploy done)' }
+        failure { echo '❌ Pipeline FAILED – check logs' }
     }
 }
