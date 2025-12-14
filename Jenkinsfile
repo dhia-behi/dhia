@@ -15,7 +15,8 @@ pipeline {
         K8S_DIR = "k8s"
 
         // Kubeconfig (WSL user)
-        KUBECONFIG = "/home/dhiaeddinebehi/.kube/config"
+       KUBECONFIG = "/var/lib/jenkins/.kube/config"
+
     }
 
     stages {
