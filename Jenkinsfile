@@ -76,51 +76,41 @@ pipeline {
             }
         }
 
-        // (Optionnel) SonarQube - active seulement si tu as configuré Sonar dans Jenkins
-        // stage('MVN SONARQUBE') {
-        //     steps {
-        //         withSonarQubeEnv('sonar') {
-        //             sh 'mvn -DskipTests sonar:sonar -Dsonar.projectKey=student-management'
-        //         }
-        //     }
-        // }
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh """
+                    set -e
+                    echo "=== K8S connectivity (minikube must already be running) ==="
+                    kubectl config use-context minikube || true
+                    kubectl get nodes
 
-       stage('Deploy to Kubernetes') {
-  steps {
-    sh """
-      set -e
+                    echo "=== Apply MySQL manifests ==="
+                    kubectl apply -f ${K8S_DIR}/mysql-secret.yaml --validate=false
+                    kubectl apply -f ${K8S_DIR}/mysql-pv-pvc.yaml --validate=false
+                    kubectl apply -f ${K8S_DIR}/mysql-deployment.yaml --validate=false
+                    kubectl apply -f ${K8S_DIR}/mysql-service.yaml --validate=false
 
-      echo "=== K8S connectivity ==="
-      kubectl config use-context minikube || true
-      kubectl get nodes
+                    echo "=== Apply Spring manifests ==="
+                    kubectl apply -f ${K8S_DIR}/spring-deployment.yaml --validate=false
+                    kubectl apply -f ${K8S_DIR}/spring-service.yaml --validate=false
 
-      echo "=== APPLY MYSQL ==="
-      kubectl apply -f ${K8S_DIR}/mysql-secret.yaml --validate=false
-      kubectl apply -f ${K8S_DIR}/mysql-pv-pvc.yaml --validate=false
-      kubectl apply -f ${K8S_DIR}/mysql-deployment.yaml --validate=false
-      kubectl apply -f ${K8S_DIR}/mysql-service.yaml --validate=false
+                    echo "=== Update Spring image ==="
+                    kubectl set image deployment/student-management \
+                      student-management=${DOCKER_IMAGE}:${BUILD_NUMBER}
 
-      echo "=== APPLY SPRING ==="
-      kubectl apply -f ${K8S_DIR}/spring-deployment.yaml --validate=false
-      kubectl apply -f ${K8S_DIR}/spring-service.yaml --validate=false
+                    echo "=== Rollout ==="
+                    kubectl rollout status deployment/student-management --timeout=180s
 
-      echo "=== UPDATE IMAGE ==="
-      kubectl set image deployment/student-management \
-        student-management=${DOCKER_IMAGE}:${BUILD_NUMBER}
-
-      echo "=== ROLLOUT ==="
-      kubectl rollout status deployment/student-management --timeout=180s
-
-      echo "=== STATUS ==="
-      kubectl get pods -o wide
-      kubectl get svc
-    """
-  }
-}
+                    echo "=== Status ==="
+                    kubectl get pods -o wide
+                    kubectl get svc
+                """
+            }
+        }
     }
 
     post {
-        success { echo "✅ SUCCESS: Build + Push DockerHub + Deploy Minikube OK" }
-        failure { echo "❌ FAILURE: check stage logs" }
+        success { echo "✅ SUCCESS: Build + Push + Deploy OK" }
+        failure { echo "❌ FAILURE: check console logs" }
     }
 }
